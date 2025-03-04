@@ -1,101 +1,115 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState } from "react";
+
+interface Transaction {
+  hash: string;
+  gasUsed: number;
+  gasPrice: number;
+  gasFee: number;
+  from: string;
+  timestamp: number;
+}
+
+export default function GasPriceTracer() {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [now, setNow] = useState<number | undefined>(undefined); // ✅ Fix hydration issue
+  const [visibleTxns, setVisibleTxns] = useState<number>(3);
+
+  // ✅ Fix hydration error by delaying 'now' update until after mount
+  useEffect(() => {
+    setNow(Date.now());
+  }, []);
+
+  useEffect(() => {
+    async function fetchGasPrices() {
+      try {
+        const res = await fetch("https://testnet-rpc.monad.xyz/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_getBlockByNumber",
+            params: ["latest", true],
+            id: 1,
+          }),
+        });
+
+        const data = await res.json();
+        const txns: Transaction[] = data.result.transactions.map((tx: any) => ({
+          hash: tx.hash ?? "Unknown",
+          gasUsed: parseInt(tx.gas ?? "0", 16),
+          gasPrice: parseInt(tx.gasPrice ?? "0", 16),
+          gasFee: (parseInt(tx.gas ?? "0", 16) * parseInt(tx.gasPrice ?? "0", 16)) / 1e18, // In MON
+          from: tx.from ?? "Unknown",
+          timestamp: tx.timestamp ? parseInt(tx.timestamp, 16) * 1000 : Date.now(),
+        }));
+
+        setTransactions(txns);
+      } catch (error) {
+        console.error("Error fetching gas prices:", error);
+      }
+      setLoading(false);
+    }
+
+    if (now !== undefined) fetchGasPrices(); // ✅ Only fetch data after hydration
+  }, [now]);
+
+  function calcAvg(txns: Transaction[]): string {
+    return txns.length
+      ? (txns.reduce((sum, tx) => sum + (tx.gasFee ?? 0), 0) / txns.length).toFixed(6)
+      : "0.000000";
+  }
+
+  useEffect(() => {
+    function updateVisibleTxns() {
+      const width = window.innerWidth;
+      setVisibleTxns(width > 1200 ? 5 : width > 768 ? 3 : 1);
+    }
+
+    updateVisibleTxns();
+    window.addEventListener("resize", updateVisibleTxns);
+    return () => window.removeEventListener("resize", updateVisibleTxns);
+  }, []);
+
+  if (now === undefined) return <p className="text-center text-gray-400">⏳ Initializing...</p>; // ✅ Fix hydration issue
+
+  const lastHrTxns = transactions.filter((tx) => now - tx.timestamp <= 3600000);
+  const last12HrTxns = transactions.filter((tx) => now - tx.timestamp <= 43200000);
+  const last24HrTxns = transactions.filter((tx) => now - tx.timestamp <= 86400000);
+
+  const avgGasFees = {
+    last1hr: calcAvg(lastHrTxns),
+    last12hr: calcAvg(last12HrTxns),
+    last24hr: calcAvg(last24HrTxns),
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <div className="p-6 bg-gray-900 text-white min-h-screen">
+      <h1 className="text-3xl font-mono font-bold text-center mb-4">⛽ Monad Gas Price Tracker</h1>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      {/* 🟢 Centered Average Gas Fees */}
+      <div className="p-4 bg-gray-800 rounded-lg shadow mb-4 text-center">
+        <p className="text-lg font-mono">⏳ Avg Gas Fee (Last 1hr): <span className="text-green-400">{avgGasFees.last1hr} MON</span></p>
+        <p className="text-lg font-mono">⏳ Avg Gas Fee (Last 12hr): <span className="text-green-400">{avgGasFees.last12hr} MON</span></p>
+        <p className="text-lg font-mono">⏳ Avg Gas Fee (Last 24hr): <span className="text-green-400">{avgGasFees.last24hr} MON</span></p>
+      </div>
+
+      {loading ? (
+        <p className="text-center text-gray-400">⏳ Loading transactions...</p>
+      ) : (
+        <div className="space-y-3">
+          {transactions.slice(0, visibleTxns).map((tx, index) => (
+            <div key={index} className="p-3 bg-gray-800 rounded-lg shadow border border-green-500">
+              <p className="text-sm">🔗 Txn: {tx.hash.slice(0, 12)}...</p>
+              <p>💰 Gas Used: {tx.gasUsed}</p>
+              <p>🔥 Gas Price: {tx.gasPrice} wei</p>
+              <p className="text-green-400">💸 Total Gas Fee: {tx.gasFee.toFixed(6)} MON</p>
+            </div>
+          ))}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
     </div>
   );
 }
